@@ -1,0 +1,1362 @@
+########Water Column Data#############
+
+library(vegan)
+library(compositions)
+library(corrplot)
+library(tidyverse)
+library(emmeans)
+library(phyloseq)
+library(agricolae)
+library(glmmTMB)
+
+library(car)
+library(ggeffects)
+library(viridis)
+library(maptools)
+library(ncf)
+library(ggplot2)
+library(mice)
+library(zCompositions)
+library(rsq)
+library(multcomp)
+library(ape)
+library(dplyr)
+library(ggplot2)
+
+###Set working directory
+setwd("~/OneDrive - University of Florida/Alkaline Lakes/All three years SALCI/")
+
+######Import table and map 
+
+##import mapping file
+mapping <-read.table("ch 4. yearly/All_years_chem_ch_4.txt", header=T, row.names=1, comment.char="", sep='\t')
+map.sub <- mapping[order(rownames(mapping)),]
+map.sub$OTUID.1=rownames(map.sub)
+map<-subset(map.sub, map.sub$OTUID.1!="GM5Shore2021" & map.sub$OTUID.1!="KO11Prairie2019" & map.sub$OTUID.1!="BO8Lake2019" &map.sub$Field.ID!="WATER")
+
+#import OTU tables for nematodes, bacteria, fungi and microbial euaryotes
+bacotu_taxa <- read.table("ch 4. yearly/Bacteria_OTU_table.csv",quote="", sep=",", row.names = 1, header=T, check.names=F,blank.lines.skip = FALSE)
+bacotu_filtered<-subset(bacotu_taxa, select=colnames(bacotu_taxa) %in% rownames(map))
+bac <- bacotu_filtered[,order(colnames(bacotu_filtered))]
+
+eukotu_taxa <- read.table("ch 4. yearly/Euk_OTU_table.csv",quote="", sep=",", row.names = 1, header=T, check.names=F,blank.lines.skip = FALSE)
+eukotu_filtered<-subset(eukotu_taxa, select=colnames(eukotu_taxa) %in% rownames(map))
+euk <- eukotu_filtered[,order(colnames(eukotu_filtered))]
+
+funotu_taxa <- read.table("ch 4. yearly/Fungi_OTU_table.csv",quote="", sep=",", row.names = 1, header=T, check.names=F,blank.lines.skip = FALSE)
+funotu_filtered<-subset(funotu_taxa, select=colnames(funotu_taxa) %in% rownames(map))
+fun <- funotu_filtered[,order(colnames(funotu_filtered))]
+
+nemotu_taxa <- read.table("ch 4. yearly/Final_OTU_All_Years_Nematode_Table.csv", sep=",", row.names = 1, header=T, check.names=F,blank.lines.skip = FALSE)
+nemotu_filtered<-subset(nemotu_taxa, select=colnames(nemotu_taxa) %in% rownames(map))
+rowSums(nemotu_filtered)
+nem <- nemotu_filtered[,order(colnames(nemotu_filtered))]
+
+
+rownames(map)==colnames(bac)
+rownames(map)==colnames(euk)
+rownames(map)==colnames(fun)
+rownames(map)==colnames(nem)
+
+##Remove less than 0.0001% of sequences
+bac=bac[rowSums(bac[])>114,]
+euk=euk[rowSums(euk[])>136,]
+fun=fun[rowSums(fun[])>136,]
+nem=nem[rowSums(nem[])>14,]
+
+######Nematode PCOA#####
+sum(nem== 0) #575103
+count=0
+nem.just.esvs <- data.frame(nem[which(apply(nem, 1,function(x){mean(x)}) > count),], 
+                              check.names=F)
+# count = 0.2 leads to 3818 ESVs rather than original 714, cutting out ESVs with fewer than 20 samples per row.
+
+# replace zeros
+#remove row with only 0
+colSums(nem.just.esvs)
+nem.just.esvs.1= nem.just.esvs[ , -which(names(nem.just.esvs) %in% c("BO9Lake2019","KO23Lake2020"))]
+row_names_df_to_remove<-c("BO9Lake2019","KO23Lake2020")
+map_for_nem<-map[!(row.names(map) %in% row_names_df_to_remove),]
+nem.just.esvs.czm <- cmultRepl(t(nem.just.esvs.1),  label=0, method="CZM")
+
+# Vegdist and PCOA function in Ape package
+nem.just.esvs.pseudo.clr <- clr(nem.just.esvs.czm)
+
+
+nem.pseudo.dist <- vegdist(nem.just.esvs.pseudo.clr, method = "euclidean",binary = FALSE, diag = FALSE, upper = TRUE)
+nem.pseudo.pcx <- prcomp(nem.just.esvs.pseudo.clr)
+
+# Sum the total variance
+nem.pseudo.mvar <- sum(nem.pseudo.pcx$sdev^2)
+# Calculate the PC1 and PC2 variance
+PC1 <- paste("PC1: ", round(100*sum(nem.pseudo.pcx$sdev[1]^2)/nem.pseudo.mvar, 1),"%")
+PC2 <- paste("PC2: ", round(100*sum(nem.pseudo.pcx$sdev[2]^2)/nem.pseudo.mvar, 1),"%")
+# We are pasting together the component name and the variance to make an axes label
+
+
+# Make a pretty plot with no points yet:
+plot(nem.pseudo.pcx$x[,2] ~ nem.pseudo.pcx$x[,1], 
+     xlab=PC1, 
+     ylab=PC2,
+     cex=0.1,col="white",main="Nematodes",
+     
+)
+
+# FUNCTION:
+Plot_ConvexHull<-function(xcoord, ycoord, lcolor){
+  hpts <- chull(x = xcoord, y = ycoord)
+  hpts <- c(hpts, hpts[1])
+  lines(xcoord[hpts], ycoord[hpts], col = lcolor)
+}
+#subset vectors for the positions in the metadata that correspond to groups
+Bp2019.ptx <- which(map_for_nem$Yearplusid=="Border Prairie 2019")
+Bs2019.ptx <- which(map_for_nem$Yearplusid=="Border Shore 2019")
+Bl2019.ptx <- which(map_for_nem$Yearplusid=="Border Lake 2019")
+Ip2019.ptx <- which(map_for_nem$Yearplusid=="Island Prairie 2019")
+Is2019.ptx <- which(map_for_nem$Yearplusid=="Island Shore 2019")
+Il2019.ptx <- which(map_for_nem$Yearplusid=="Island Lake 2019")
+Gp2019.ptx <- which(map_for_nem$Yearplusid=="Gimlet Prairie 2019")
+Gs2019.ptx <- which(map_for_nem$Yearplusid=="Gimlet Shore 2019")
+Gl2019.ptx <- which(map_for_nem$Yearplusid=="Gimlet Lake 2019")
+BNp2019.ptx <- which(map_for_nem$Yearplusid=="Bean Prairie 2019")
+BNs2019.ptx <- which(map_for_nem$Yearplusid=="Bean Shore 2019")
+BNl2019.ptx <- which(map_for_nem$Yearplusid=="Bean Lake 2019")
+KOp2019.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Prairie 2019")
+KOs2019.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Shore 2019")
+KOl2019.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Lake 2019")
+Bp2020.ptx <- which(map_for_nem$Yearplusid=="Border Prairie 2020")
+Bs2020.ptx <- which(map_for_nem$Yearplusid=="Border Shore 2020")
+Bl2020.ptx <- which(map_for_nem$Yearplusid=="Border Lake 2020")
+Ip2020.ptx <- which(map_for_nem$Yearplusid=="Island Prairie 2020")
+Is2020.ptx <- which(map_for_nem$Yearplusid=="Island Shore 2020")
+Il2020.ptx <- which(map_for_nem$Yearplusid=="Island Lake 2020")
+Gp2020.ptx <- which(map_for_nem$Yearplusid=="Gimlet Prairie 2020")
+Gs2020.ptx <- which(map_for_nem$Yearplusid=="Gimlet Shore 2020")
+Gl2020.ptx <- which(map_for_nem$Yearplusid=="Gimlet Lake 2020")
+BNp2020.ptx <- which(map_for_nem$Yearplusid=="Bean Prairie 2020")
+BNs2020.ptx <- which(map_for_nem$Yearplusid=="Bean Shore 2020")
+BNl2020.ptx <- which(map_for_nem$Yearplusid=="Bean Lake 2020")
+KOp2020.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Prairie 2020")
+KOs2020.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Shore 2020")
+KOl2020.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Lake 2020")
+Bp2021.ptx <- which(map_for_nem$Yearplusid=="Border Prairie 2021")
+Bs2021.ptx <- which(map_for_nem$Yearplusid=="Border Shore 2021")
+Bl2021.ptx <- which(map_for_nem$Yearplusid=="Border Lake 2021")
+Ip2021.ptx <- which(map_for_nem$Yearplusid=="Island Prairie 2021")
+Is2021.ptx <- which(map_for_nem$Yearplusid=="Island Shore 2021")
+Il2021.ptx <- which(map_for_nem$Yearplusid=="Island Lake 2021")
+Gp2021.ptx <- which(map_for_nem$Yearplusid=="Gimlet Prairie 2021")
+Gs2021.ptx <- which(map_for_nem$Yearplusid=="Gimlet Shore 2021")
+Gl2021.ptx <- which(map_for_nem$Yearplusid=="Gimlet Lake 2021")
+BNp2021.ptx <- which(map_for_nem$Yearplusid=="Bean Prairie 2021")
+BNs2021.ptx <- which(map_for_nem$Yearplusid=="Bean Shore 2021")
+BNl2021.ptx <- which(map_for_nem$Yearplusid=="Bean Lake 2021")
+KOp2021.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Prairie 2021")
+KOs2021.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Shore 2021")
+KOl2021.ptx <- which(map_for_nem$Yearplusid=="Kokjohn Lake 2021")
+
+Prairie <- which(map_for_nem$Field.ID == "PRAIRIE")
+Shore <- which(map_for_nem$Field.ID == "SHORELINE")
+Sediment <-which(map_for_nem$Field.ID=="SEDIMENT")
+
+# plot the points for each group using points()
+#Function to plot transparent points:
+addTrans <- function(color,trans)
+{
+  # This function adds transparancy to a color.
+  # Define transparancy with an integer between 0 and 255
+  # 0 being fully transparant and 255 being fully visable
+  # Works with either color and trans a vector of equal length,
+  # or one of the two of length 1.
+  
+  if (length(color)!=length(trans)&!any(c(length(color),length(trans))==1)) stop("Vector lengths not correct")
+  if (length(color)==1 & length(trans)>1) color <- rep(color,length(trans))
+  if (length(trans)==1 & length(color)>1) trans <- rep(trans,length(color))
+  
+  num2hex <- function(x)
+  {
+    hex <- unlist(strsplit("0123456789ABCDEF",split=""))
+    return(paste(hex[(x-x%%16)/16+1],hex[x%%16+1],sep=""))
+  }
+  rgb <- rbind(col2rgb(color),trans)
+  res <- paste("#",apply(apply(rgb,2,num2hex),2,paste,collapse=""),sep="")
+  return(res)
+}
+
+#Plot points:
+points(nem.pseudo.pcx$x[Il2019.ptx,2] ~ nem.pseudo.pcx$x[Il2019.ptx,1],pch=2, cex=1,  col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gl2019.ptx,2] ~ nem.pseudo.pcx$x[Gl2019.ptx,1],pch=2, cex=1, col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNl2019.ptx,2] ~ nem.pseudo.pcx$x[BNl2019.ptx,1], pch=2, cex=1, col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bl2019.ptx,2] ~ nem.pseudo.pcx$x[Bl2019.ptx,1], pch=2, cex=1, col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOl2019.ptx,2] ~ nem.pseudo.pcx$x[KOl2019.ptx,1], pch=2, cex=1, col=addTrans("red",50))
+points(nem.pseudo.pcx$x[Is2019.ptx,2] ~ nem.pseudo.pcx$x[Is2019.ptx,1],pch=1, cex=1, col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gs2019.ptx,2] ~ nem.pseudo.pcx$x[Gs2019.ptx,1],pch=1, cex=1, col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNs2019.ptx,2] ~ nem.pseudo.pcx$x[BNs2019.ptx,1], pch=1, cex=1, col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bs2019.ptx,2] ~ nem.pseudo.pcx$x[Bs2019.ptx,1],pch=1, cex=1, col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOs2019.ptx,2] ~ nem.pseudo.pcx$x[KOs2019.ptx,1], pch=1, cex=1, col=addTrans("red",50))
+points(nem.pseudo.pcx$x[Ip2019.ptx,2] ~ nem.pseudo.pcx$x[Ip2019.ptx,1],pch=0, cex=1, col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gp2019.ptx,2] ~ nem.pseudo.pcx$x[Gp2019.ptx,1],pch=0, cex=1,col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNp2019.ptx,2] ~ nem.pseudo.pcx$x[BNp2019.ptx,1],pch=0, cex=1, col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bp2019.ptx,2] ~ nem.pseudo.pcx$x[Bp2019.ptx,1],pch=0, cex=1, col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOp2019.ptx,2] ~ nem.pseudo.pcx$x[KOp2019.ptx,1], pch=0, cex=1, col=addTrans("red",50))
+
+points(nem.pseudo.pcx$x[Il2020.ptx,2] ~ nem.pseudo.pcx$x[Il2020.ptx,1],pch=2, cex=1,col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gl2020.ptx,2] ~ nem.pseudo.pcx$x[Gl2020.ptx,1],pch=2, cex=1,col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNl2020.ptx,2] ~ nem.pseudo.pcx$x[BNl2020.ptx,1], pch=2, cex=1, col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bl2020.ptx,2] ~ nem.pseudo.pcx$x[Bl2020.ptx,1], pch=2, ,cex=1, col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOl2020.ptx,2] ~ nem.pseudo.pcx$x[KOl2020.ptx,1], pch=2, cex=1, col=addTrans("red",50))
+points(nem.pseudo.pcx$x[Is2020.ptx,2] ~ nem.pseudo.pcx$x[Is2020.ptx,1],pch=13, cex=1, col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gs2020.ptx,2] ~ nem.pseudo.pcx$x[Gs2020.ptx,1],pch=13, cex=1, col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNs2020.ptx,2] ~ nem.pseudo.pcx$x[BNs2020.ptx,1], pch=13, cex=1, col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bs2020.ptx,2] ~ nem.pseudo.pcx$x[Bs2020.ptx,1],pch=13, cex=1, col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOs2020.ptx,2] ~ nem.pseudo.pcx$x[KOs2020.ptx,1], pch=13, cex=1, col=addTrans("red",50))
+points(nem.pseudo.pcx$x[Ip2020.ptx,2] ~ nem.pseudo.pcx$x[Ip2020.ptx,1],pch=12, cex=1, col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gp2020.ptx,2] ~ nem.pseudo.pcx$x[Gp2020.ptx,1],pch=12, cex=1, col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNp2020.ptx,2] ~ nem.pseudo.pcx$x[BNp2020.ptx,1],pch=12, cex=1, col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bp2020.ptx,2] ~ nem.pseudo.pcx$x[Bp2020.ptx,1],pch=12, cex=1,col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOp2020.ptx,2] ~ nem.pseudo.pcx$x[KOp2020.ptx,1], pch=12, cex=1, col=addTrans("red",50))
+
+points(nem.pseudo.pcx$x[Il2021.ptx,2] ~ nem.pseudo.pcx$x[Il2021.ptx,1],pch=17, cex=1, col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gl2021.ptx,2] ~ nem.pseudo.pcx$x[Gl2021.ptx,1],pch=17, cex=1, col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNl2021.ptx,2] ~ nem.pseudo.pcx$x[BNl2021.ptx,1], pch=17, cex=1, col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bl2021.ptx,2] ~ nem.pseudo.pcx$x[Bl2021.ptx,1], pch=17, cex=1,col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOl2021.ptx,2] ~ nem.pseudo.pcx$x[KOl2021.ptx,1], pch=17, cex=1, col=addTrans("red",50))
+points(nem.pseudo.pcx$x[Is2021.ptx,2] ~ nem.pseudo.pcx$x[Is2021.ptx,1],pch=16, cex=1, col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gs2021.ptx,2] ~ nem.pseudo.pcx$x[Gs2021.ptx,1],pch=16, cex=1, col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNs2021.ptx,2] ~ nem.pseudo.pcx$x[BNs2021.ptx,1], pch=16, cex=1, col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bs2021.ptx,2] ~ nem.pseudo.pcx$x[Bs2021.ptx,1],pch=16, cex=1, col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOs2021.ptx,2] ~ nem.pseudo.pcx$x[KOs2021.ptx,1], pch=16, cex=1,col=addTrans("red",50))
+points(nem.pseudo.pcx$x[Ip2021.ptx,2] ~ nem.pseudo.pcx$x[Ip2021.ptx,1],pch=15, cex=1,col=addTrans("lightblue",50))
+points(nem.pseudo.pcx$x[Gp2021.ptx,2] ~ nem.pseudo.pcx$x[Gp2021.ptx,1],pch=15, cex=1, col=addTrans("blue",50))
+points(nem.pseudo.pcx$x[BNp2021.ptx,2] ~ nem.pseudo.pcx$x[BNp2021.ptx,1],pch=15, cex=1,col=addTrans("green",50))
+points(nem.pseudo.pcx$x[Bp2021.ptx,2] ~ nem.pseudo.pcx$x[Bp2021.ptx,1],pch=15, cex=1, col=addTrans("darkgoldenrod1",50))
+points(nem.pseudo.pcx$x[KOp2021.ptx,2] ~ nem.pseudo.pcx$x[KOp2021.ptx,1], pch=15, cex=1, col=addTrans("red",50))
+
+###Plot centroids:
+points(mean(nem.pseudo.pcx$x[Il2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Il2019.ptx,1]),pch=2, cex=3.5, col="lightblue")
+points(mean(nem.pseudo.pcx$x[Gl2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gl2019.ptx,1]),pch=2, cex=3.5,col="blue")
+points(mean(nem.pseudo.pcx$x[BNl2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNl2019.ptx,1]), pch=2, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bl2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bl2019.ptx,1]), pch=2, cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOl2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOl2019.ptx,1]), pch=2, cex=3.5, col="red")
+points(mean(nem.pseudo.pcx$x[Is2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Is2019.ptx,1]),pch=1, cex=3.5, col="lightblue")
+points(mean(nem.pseudo.pcx$x[Gs2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gs2019.ptx,1]),pch=1, cex=3.5, col="blue")
+points(mean(nem.pseudo.pcx$x[BNs2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNs2019.ptx,1]), pch=1, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bs2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bs2019.ptx,1]),pch=1, cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOs2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOs2019.ptx,1]), pch=1, cex=3.5, col="red")
+points(mean(nem.pseudo.pcx$x[Ip2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Ip2019.ptx,1]),pch=0, cex=3.5, col= "lightblue")
+points(mean(nem.pseudo.pcx$x[Gp2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gp2019.ptx,1]),pch=0, cex=3.5, col="blue")
+points(mean(nem.pseudo.pcx$x[BNp2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNp2019.ptx,1]),pch=0, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bp2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bp2019.ptx,1]),pch=0, cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOp2019.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOp2019.ptx,1]), pch=0, cex=3.5, col="red")
+
+points(mean(nem.pseudo.pcx$x[Il2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Il2020.ptx,1]),pch=2, cex=3.5, col="lightblue")
+points(mean(nem.pseudo.pcx$x[Gl2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gl2020.ptx,1]),pch=2, cex=3.5, col="blue")
+points(mean(nem.pseudo.pcx$x[BNl2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNl2020.ptx,1]), pch=3, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bl2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bl2020.ptx,1]),  pch=3,cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOl2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOl2020.ptx,1]),  pch=3,cex=3.5, col="red")
+points(mean(nem.pseudo.pcx$x[Is2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Is2020.ptx,1]),pch=13, cex=3.5, col="lightblue")
+points(mean(nem.pseudo.pcx$x[Gs2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gs2020.ptx,1]),pch=13, cex=3.5, col="blue")
+points(mean(nem.pseudo.pcx$x[BNs2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNs2020.ptx,1]), pch=13, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bs2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bs2020.ptx,1]),pch=13, cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOs2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOs2020.ptx,1]), pch=13, cex=3.5, col="red")
+points(mean(nem.pseudo.pcx$x[Ip2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Ip2020.ptx,1]),pch=12, cex=3.5, col= "lightblue")
+points(mean(nem.pseudo.pcx$x[Gp2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gp2020.ptx,1]),pch=12, cex=3.5, col="blue")
+points(mean(nem.pseudo.pcx$x[BNp2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNp2020.ptx,1]),pch=12, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bp2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bp2020.ptx,1]),pch=12, cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOp2020.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOp2020.ptx,1]), pch=12, cex=3.5, col="red")
+
+points(mean(nem.pseudo.pcx$x[Il2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Il2021.ptx,1]),pch=17, cex=3.5, col="lightblue")
+points(mean(nem.pseudo.pcx$x[Gl2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gl2021.ptx,1]),pch=17, cex=3.5, col="blue")
+points(mean(nem.pseudo.pcx$x[BNl2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNl2021.ptx,1]), pch=17, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bl2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bl2021.ptx,1]), pch=17, cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOl2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOl2021.ptx,1]), pch=17, cex=3.5, col="red")
+points(mean(nem.pseudo.pcx$x[Is2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Is2021.ptx,1]),pch=16, cex=3.5, col="lightblue")
+points(mean(nem.pseudo.pcx$x[Gs2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gs2021.ptx,1]),pch=16, cex=3.5, col="blue")
+points(mean(nem.pseudo.pcx$x[BNs2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNs2021.ptx,1]), pch=16, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bs2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bs2021.ptx,1]),pch=16, cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOs2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOs2021.ptx,1]), pch=16, cex=3.5, col="red")
+points(mean(nem.pseudo.pcx$x[Ip2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Ip2021.ptx,1]),pch=15, cex=3.5, col= "lightblue")
+points(mean(nem.pseudo.pcx$x[Gp2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Gp2021.ptx,1]),pch=15, cex=3.5, col="blue")
+points(mean(nem.pseudo.pcx$x[BNp2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[BNp2021.ptx,1]),pch=15, cex=3.5, col="green")
+points(mean(nem.pseudo.pcx$x[Bp2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[Bp2021.ptx,1]),pch=15, cex=3.5, col="darkgoldenrod1")
+points(mean(nem.pseudo.pcx$x[KOp2021.ptx,2]) ~ mean(nem.pseudo.pcx$x[KOp2021.ptx,1]), pch=15, cex=3.5, col="red")
+
+#Add Legend
+legend(5,27, legend=c("Gimlet","Island","Bean","Border", "Kokjohn"), col=c("blue","lightblue","green","darkgoldenrod1", "red"), pch=c(17,17,17,17,17),bty="n")
+legend(13,27, legend=c("Lake", "Shore", "Prairie"), col=c("blue", "blue", "blue"), pch=c(17,16,15),bty="n")
+legend(13,20, legend=c("2019","2020", "2021"), col=c("blue", "blue", "blue"), pch=c(1,13,16),bty="n")
+
+dev.off()
+# PERMANOVA
+nem.czm.perm <- adonis2(nem.pseudo.dist~year*Habitat*Lake_Basin, permutations = 999) 
+nem.czm.perm # P = .001
+
+#Whole community Pairwise Adonis:
+nem_pairwise=pairwise.adonis2(nem.pseudo.dist ~  year*Field.ID*Soil_pH, strata= "Grower",data = map_for_nem)
+nem_pairwise
+
+##Split by habitat
+sub.map.pairwise_sed=subset(map_for_nem, map_for_nem$Field.ID== "SEDIMENT")
+#match distance matrices to subset map
+nem.pseudo.dist=as.matrix(nem.pseudo.dist)
+sub.matrix_sed_pairwise<-as.matrix(subset(nem.pseudo.dist, rownames(nem.pseudo.dist) %in% rownames(sub.map.pairwise_sed) , select = colnames(nem.pseudo.dist) %in% rownames(sub.map.pairwise_sed)))
+nem_pairwise_sed=pairwise.adonis2(sub.matrix_sed_pairwise ~  year*Soil_pH*Grower+Lake_level,data = sub.map.pairwise_sed)
+nem_pairwise_sed
+
+sub.map.pairwise_shore=subset(map_for_nem, map_for_nem$Field.ID== "SHORELINE")
+#match distance matrices to subset map
+nem.pseudo.dist=as.matrix(nem.pseudo.dist)
+sub.matrix_shore_pairwise<-as.matrix(subset(nem.pseudo.dist, rownames(nem.pseudo.dist) %in% rownames(sub.map.pairwise_shore) , select = colnames(nem.pseudo.dist) %in% rownames(sub.map.pairwise_shore)))
+nem_pairwise_shore=pairwise.adonis2(sub.matrix_shore_pairwise ~ year*Soil_pH*Grower+Lake_level,data = sub.map.pairwise_shore)
+nem_pairwise_shore
+
+sub.map.pairwise_prairie=subset(map_for_nem, map_for_nem$Field.ID== "PRAIRIE")
+#match distance matrices to subset map
+nem.pseudo.dist=as.matrix(nem.pseudo.dist)
+sub.matrix_prairie_pairwise<-as.matrix(subset(nem.pseudo.dist, rownames(nem.pseudo.dist) %in% rownames(sub.map.pairwise_prairie) , select = colnames(nem.pseudo.dist) %in% rownames(sub.map.pairwise_prairie)))
+nem_pairwise_prairie=pairwise.adonis2(sub.matrix_prairie_pairwise ~  year*Soil_pH*Grower+NDVI,data = sub.map.pairwise_prairie)
+nem_pairwise_prairie
+
+
+
+#Alpha Diversity#
+######Bacteria######
+Bac16S_otu <- otu_table(bac,taxa_are_rows = T)
+Bac16S_otu[1:3,]
+
+#order treatments
+map$id = factor(map$id, levels=c("Island Lake","Gimlet Lake","Bean Lake", "Border Lake", "Island Water","Gimlet Water","Bean Water", "Border Water","Island Prairie","Gimlet Prairie","Bean Prairie","Border Prairie"))
+sample_design <- sample_data(map)
+bacotu_all = phyloseq(Bac16S_otu, sample_data(map))
+bacotu_all
+
+########calculate richness indexes
+richness_bac <- estimate_richness(bacotu_all,measures=c("Observed","Shannon"))
+
+###construct data frame for statistic test among Treatment
+order_richness_bac <- richness_bac[order(rownames(richness_bac)),]
+richness_stat_bac<- cbind(order_richness_bac,map)
+
+####Test Significance of Richness
+#Define Habitat and lake As a factors
+richness_stat_bac$Habitat= as.factor(richness_stat_bac$Field.ID)
+richness_stat_bac$Lake= as.factor(richness_stat_bac$Grower)
+richness_stat_bac$year= as.factor(richness_stat_bac$year)
+
+
+#GLM to test richness ("Observed")
+Richness<- glm(Shannon~Habitat*Lake*year,data =richness_stat_bac)
+Anova(Richness, ddf="Kenward-Roger")
+rsq(Richness)
+ph <- glht(Richness, mcp(Lake = "Tukey"))
+cld(ph)
+
+emmeans(Richness, pairwise~Lake|Habitat)
+emmeans(Richness, pairwise~Habitat|year)
+emmeans(Richness, pairwise~Lake|Habitat|year)
+### extract and plot raw residuals
+resids1<-residuals(Richness)
+plot(resids1)
+
+#General linear model plot
+bac_GLM= glmmTMB((Shannon)~Soil_pH*Habitat*year+(1|Lake/Habitat), data=richness_stat_bac)
+hist(richness_stat_bac$Shannon)
+Anova(bac_GLM, ddf="Kenward-Roger")
+summary(bac_GLM)
+simulationOutput <- simulateResiduals(fittedModel = bac_GLM, n=1000,plot = T)
+
+### Efron r-squared 
+Actual    = richness_stat_bac$Shannon
+Predicted = predict(bac_GLM, type="response")
+Residuals = residuals(bac_GLM)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+x1_bac<-subset(richness_stat_bac$Shannon, richness_stat_bac$Habitat=="PRAIRIE")
+y1_bac<-subset(richness_stat_bac$Soil_pH, richness_stat_bac$Habitat=="PRAIRIE")
+data_prairie_bac=data.frame(x1_bac,y1_bac)
+x2_bac<-subset(richness_stat_bac$Shannon, richness_stat_bac$Habitat=="SHORELINE")
+y2_bac<-subset(richness_stat_bac$Soil_pH, richness_stat_bac$Habitat=="SHORELINE")
+data_shore_bac<-data.frame(x2_bac,y2_bac)
+x3_bac<-subset(richness_stat_bac$Shannon, richness_stat_bac$Habitat=="SEDIMENT")
+y3_bac<-subset(richness_stat_bac$Soil_pH, richness_stat_bac$Habitat=="SEDIMENT")
+data_sediment_bac<-data.frame(x3_bac,y3_bac)
+
+
+Bacteria_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_bac, y = x1_bac), data = data_prairie_bac, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_bac, y = x2_bac), data = data_shore_bac, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_bac, y = x3_bac), data = data_sediment_bac, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Bacteria")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+
+
+
+######Eukaryote######
+Euk16S_otu <- otu_table(euk,taxa_are_rows = T)
+Euk16S_otu[1:3,]
+
+#order treatments
+map$id = factor(map$id, levels=c("Island Lake","Gimlet Lake","Bean Lake", "Border Lake", "Island Water","Gimlet Water","Bean Water", "Border Water","Island Prairie","Gimlet Prairie","Bean Prairie","Border Prairie"))
+sample_design <- sample_data(map)
+eukotu_all = phyloseq(Euk16S_otu, sample_data(map))
+eukotu_all
+
+########calculate richness indexes
+richness_euk<- estimate_richness(eukotu_all,measures=c("Observed","Shannon"))
+
+###construct data frame for statistic test among Treatment
+order_richness_euk <- richness_euk[order(rownames(richness_euk)),]
+richness_stat_euk<- cbind(order_richness_euk,map)
+
+####Test Significance of Richness
+#Define Habitat and lake As a factors
+richness_stat_euk$Habitat= as.factor(richness_stat_euk$Field.ID)
+richness_stat_euk$Lake= as.factor(richness_stat_euk$Grower)
+richness_stat_euk$year= as.factor(richness_stat_euk$year)
+
+
+#GLM to test richness ("Observed")
+Richness_euk<- glm(Shannon~year*Habitat*Lake,data =richness_stat_euk)
+Anova(Richness_euk, ddf="Kenward-Roger")
+rsq(Richness_euk)
+
+
+emmeans(Richness_euk, pairwise~Lake|Habitat)
+emmeans(Richness_euk, pairwise~Habitat|year)
+emmeans(Richness_euk, pairwise~Lake|Habitat|year)
+### extract and plot raw residuals
+resids.euk<-residuals(Richness_euk)
+plot(resids.euk)
+
+
+#General linear model plot
+euk_GLM= glmmTMB(Shannon~Soil_pH*Habitat+(1|Lake+year), data=richness_stat_euk)
+Anova(euk_GLM, ddf="Kenward-Roger")
+summary(euk_GLM)
+### Efron r-squared 
+Actual    = richness_stat_euk$Shannon
+Predicted = predict(euk_GLM, type="response")
+Residuals = residuals(euk_GLM)
+simulationOutput <- simulateResiduals(fittedModel = euk_GLM, n=1000,plot = T)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+
+
+
+x1_euk<-subset(richness_stat_euk$Shannon, richness_stat_euk$Habitat=="PRAIRIE")
+y1_euk<-subset(richness_stat_euk$Soil_pH, richness_stat_euk$Habitat=="PRAIRIE")
+data_prairie_euk=data.frame(x1_euk,y1_euk)
+x2_euk<-subset(richness_stat_euk$Shannon, richness_stat_euk$Habitat=="SHORELINE")
+y2_euk<-subset(richness_stat_euk$Soil_pH, richness_stat_euk$Habitat=="SHORELINE")
+data_shore_euk<-data.frame(x2_euk,y2_euk)
+x3_euk<-subset(richness_stat_euk$Shannon, richness_stat_euk$Habitat=="SEDIMENT")
+y3_euk<-subset(richness_stat_euk$Soil_pH, richness_stat_euk$Habitat=="SEDIMENT")
+data_sediment_euk<-data.frame(x3_euk,y3_euk)
+
+
+Eukaryote_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_euk, y = x1_euk), data = data_prairie_euk, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_euk, y = x2_euk), data = data_shore_euk, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_euk, y = x3_euk), data = data_sediment_euk, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Eukaryotes")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+
+
+
+######Fungi######
+Fun16S_otu <- otu_table(fun,taxa_are_rows = T)
+Fun16S_otu[1:3,]
+
+#order treatments
+map$id = factor(map$id, levels=c("Island Lake","Gimlet Lake","Bean Lake", "Border Lake", "Island Water","Gimlet Water","Bean Water", "Border Water","Island Prairie","Gimlet Prairie","Bean Prairie","Border Prairie"))
+sample_design <- sample_data(map)
+funotu_all = phyloseq(Fun16S_otu, sample_data(map))
+funotu_all
+
+########calculate richness indexes
+richness_fun<- estimate_richness(funotu_all,measures=c("Observed","Shannon"))
+
+###construct data frame for statistic test among Treatment
+order_richness_fun <- richness_fun[order(rownames(richness_fun)),]
+richness_stat_fun<- cbind(order_richness_fun,map)
+
+####Test Significance of Richness
+#Define Habitat and lake As a factors
+richness_stat_fun$Habitat= as.factor(richness_stat_fun$Field.ID)
+richness_stat_fun$Lake= as.factor(richness_stat_fun$Grower)
+richness_stat_fun$year= as.factor(richness_stat_fun$year)
+
+
+#GLM to test richness ("Observed")
+Richness_fun<- glm(Observed~Habitat*Lake*year,data =richness_stat_fun)
+Anova(Richness_fun, ddf="Kenward-Roger")
+rsq(Richness_fun)
+
+emmeans(Richness_fun, pairwise~Lake|Habitat)
+emmeans(Richness_fun, pairwise~Habitat|year)
+emmeans(Richness_fun, pairwise~Lake|Habitat|year)
+### extract and plot raw residuals
+resids.euk<-residuals(Richness_fun)
+plot(resids.euk)
+
+#General linear model plot
+fun_GLM= glmmTMB(Shannon~Soil_pH*Habitat+(1|Lake), data=richness_stat_fun)
+Anova(fun_GLM, ddf="Kenward-Roger")
+summary(fun_GLM)
+### Efron r-squared 
+Actual    = richness_stat_fun$Shannon
+Predicted = predict(fun_GLM, type="response")
+Residuals = residuals(fun_GLM)
+
+simulationOutput <- simulateResiduals(fittedModel = fun_GLM, n=1000,plot = T)
+
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+x1_fun<-subset(richness_stat_fun$Shannon, richness_stat_fun$Habitat=="PRAIRIE")
+y1_fun<-subset(richness_stat_fun$Soil_pH, richness_stat_fun$Habitat=="PRAIRIE")
+data_prairie_fun=data.frame(x1_fun,y1_fun)
+x2_fun<-subset(richness_stat_fun$Shannon, richness_stat_fun$Habitat=="SHORELINE")
+y2_fun<-subset(richness_stat_fun$Soil_pH, richness_stat_fun$Habitat=="SHORELINE")
+data_shore_fun<-data.frame(x2_fun,y2_fun)
+x3_fun<-subset(richness_stat_fun$Shannon, richness_stat_fun$Habitat=="SEDIMENT")
+y3_fun<-subset(richness_stat_fun$Soil_pH, richness_stat_fun$Habitat=="SEDIMENT")
+data_sediment_fun<-data.frame(x3_fun,y3_fun)
+
+
+Fungi_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_fun, y = x1_fun), data = data_prairie_fun, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_fun, y = x2_fun), data = data_shore_fun, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_fun, y = x3_fun), data = data_sediment_fun, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Fungi")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+
+
+######Nematode######
+Nem16S_otu <- otu_table(nem,taxa_are_rows = T)
+Nem16S_otu[1:3,]
+
+#order treatments
+map$id = factor(map$id, levels=c("Island Lake","Gimlet Lake","Bean Lake", "Border Lake", "Island Water","Gimlet Water","Bean Water", "Border Water","Island Prairie","Gimlet Prairie","Bean Prairie","Border Prairie"))
+sample_design <- sample_data(map)
+nemotu_all = phyloseq(Nem16S_otu, sample_data(map))
+nemotu_all
+
+########calculate richness indexes
+richness_nem<- estimate_richness(nemotu_all,measures=c("Observed","Shannon"))
+
+###construct data frame for statistic test among Treatment
+order_richness_nem <- richness_nem[order(rownames(richness_nem)),]
+richness_stat_nem<- cbind(order_richness_nem,map)
+
+####Test Significance of Richness
+#Define Habitat and lake As a factors
+richness_stat_nem$Habitat= as.factor(richness_stat_nem$Field.ID)
+richness_stat_nem$Lake= as.factor(richness_stat_nem$Grower)
+richness_stat_nem$year= as.factor(richness_stat_nem$year)
+
+
+#GLM to test richness ("Observed")
+Richness_nem<- glm(Observed~Habitat*Lake*year,data =richness_stat_nem)
+Anova(Richness_nem, ddf="Kenward-Roger")
+rsq(Richness_nem)
+
+emmeans(Richness_nem, pairwise~Lake|Habitat)
+emmeans(Richness_nem, pairwise~Habitat|year)
+emmeans(Richness_nem, pairwise~Lake|Habitat|year)
+### extract and plot raw residuals
+resids.euk<-residuals(Richness_nem)
+plot(resids.euk)
+
+#General linear model plot
+nem_GLM= glmmTMB(Shannon~Soil_pH*Habitat*year+(1|Lake), data=richness_stat_nem)
+Anova(nem_GLM, ddf="Kenward-Roger")
+summary(nem_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem$Shannon
+Predicted = predict(nem_GLM, type="response")
+Residuals = residuals(nem_GLM)
+
+simulationOutput <- simulateResiduals(fittedModel = nem_GLM, n=1000,plot = T)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+
+x1_nem<-subset(richness_stat_nem$Shannon, richness_stat_nem$Habitat=="PRAIRIE")
+y1_nem<-subset(richness_stat_fun$Soil_pH, richness_stat_nem$Habitat=="PRAIRIE")
+data_prairie_nem=data.frame(x1_nem,y1_nem)
+x2_nem<-subset(richness_stat_nem$Shannon, richness_stat_nem$Habitat=="SHORELINE")
+y2_nem<-subset(richness_stat_nem$Soil_pH, richness_stat_nem$Habitat=="SHORELINE")
+data_shore_nem<-data.frame(x2_nem,y2_nem)
+x3_nem<-subset(richness_stat_nem$Shannon, richness_stat_nem$Habitat=="SEDIMENT")
+y3_nem<-subset(richness_stat_nem$Soil_pH, richness_stat_nem$Habitat=="SEDIMENT")
+data_sediment_nem<-data.frame(x3_nem,y3_nem)
+
+
+Nematode_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_nem, y = x1_nem), data = data_prairie_nem, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_nem, y = x2_nem), data = data_shore_nem, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_nem, y = x3_nem), data = data_sediment_nem, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Nematode")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+##Subset by habitat
+map_prairie=subset(richness_stat_nem, richness_stat_nem$Field.ID=="PRAIRIE")
+map_shore=subset(richness_stat_nem, richness_stat_nem$Field.ID=="SHORELINE")
+map_water=subset(richness_stat_nem, richness_stat_nem$Field.ID=="SEDIMENT")
+
+
+#General linear model plot
+nem_GLM= glmmTMB(Shannon~Soil_pH*year+year*NDVI+ (1|Grower) , data=map_prairie)
+Anova(nem_GLM, ddf="Kenward-Roger")
+summary(nem_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem$Shannon
+Predicted = predict(nem_GLM, type="response")
+Residuals = residuals(nem_GLM)
+
+simulationOutput <- simulateResiduals(fittedModel = nem_GLM, n=1000,plot = T)
+
+
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+
+#General linear model plot
+nem_GLM= glmmTMB(Shannon~Soil_pH*year+year*Lake_level+ (1|Grower), data=map_shore)
+Anova(nem_GLM, ddf="Kenward-Roger")
+summary(nem_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem$Shannon
+Predicted = predict(nem_GLM, type="response")
+Residuals = residuals(nem_GLM)
+
+simulationOutput <- simulateResiduals(fittedModel = nem_GLM, n=1000,plot = T)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+#General linear model plot
+nem_GLM= glmmTMB(Shannon~Soil_pH*year+year*Lake_level+ (1|Grower), data=map_water)
+Anova(nem_GLM, ddf="Kenward-Roger")
+summary(nem_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem$Shannon
+Predicted = predict(nem_GLM, type="response")
+Residuals = residuals(nem_GLM)
+
+simulationOutput <- simulateResiduals(fittedModel = nem_GLM, n=1000,plot = T)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+
+#Subset by feeding group
+nematode_bf=subset(nem, nemotu_taxa$trophic=="BF")
+nematode_ff=subset(nem, nemotu_taxa$trophic=="FF")
+nematode_om=subset(nem, nemotu_taxa$trophic=="OM")
+nematode_pp=subset(nem, nemotu_taxa$trophic=="PP")
+df=subset(nem, nemotu_taxa$trophic=="PR")
+nematode_pr=df[-c(77:78), ]
+
+NemBF_otu <- otu_table(nematode_bf,taxa_are_rows = T)
+NemFF_otu <- otu_table(nematode_ff,taxa_are_rows = T)
+NemOM_otu <- otu_table(nematode_om,taxa_are_rows = T)
+NemPP_otu <- otu_table(nematode_pp,taxa_are_rows = T)
+NemPR_otu <- otu_table(nematode_pr,taxa_are_rows = T)
+NemBF_otu[1:3,]
+NemFF_otu[1:3,]
+NemOM_otu[1:3,]
+NemPP_otu[1:3,]
+NemPR_otu[1:3,]
+
+#order treatments
+map$id = factor(map$id, levels=c("Island Lake","Gimlet Lake","Bean Lake", "Border Lake", "Island Water","Gimlet Water","Bean Water", "Border Water","Island Prairie","Gimlet Prairie","Bean Prairie","Border Prairie"))
+sample_design <- sample_data(map)
+nemotu_all_bf = phyloseq(NemBF_otu, sample_data(map))
+nemotu_all_ff = phyloseq(NemFF_otu, sample_data(map))
+nemotu_all_om = phyloseq(NemOM_otu, sample_data(map))
+nemotu_all_pp = phyloseq(NemPP_otu, sample_data(map))
+nemotu_all_pred = phyloseq(NemPR_otu, sample_data(map))
+nemotu_all_bf
+nemotu_all_ff
+nemotu_all_om
+nemotu_all_pr
+nemotu_all_pp
+
+########calculate richness indexes
+richness_nem_bf<- estimate_richness(nemotu_all_bf,measures=c("Observed","Shannon"))
+order_richness_nem_bf <- richness_nem_bf[order(rownames(richness_nem_bf)),]
+richness_stat_nem_bf<- cbind(order_richness_nem_bf,map)
+
+nem_bf_GLM= glmmTMB(Shannon~Soil_pH*year*+(1|Field.ID), data=richness_stat_nem_bf)
+Anova(nem_bf_GLM, ddf="Kenward-Roger")
+summary(nem_bf_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem_bf$Shannon
+Predicted = predict(nem_bf_GLM, type="response")
+Residuals = residuals(nem_bf_GLM)
+
+simulationOutput <- simulateResiduals(fittedModel = nem_bf_GLM, n=1000,plot = T)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+x1_nem_bf<-subset(richness_stat_nem_bf$Shannon, richness_stat_nem_bf$Field.ID=="PRAIRIE")
+y1_nem_bf<-subset(richness_stat_nem_bf$Soil_pH, richness_stat_nem_bf$Field.ID=="PRAIRIE")
+data_prairie_nem_bf=data.frame(x1_nem_bf,y1_nem_bf)
+x2_nem_bf<-subset(richness_stat_nem_bf$Shannon, richness_stat_nem_bf$Field.ID=="SHORELINE")
+y2_nem_bf<-subset(richness_stat_nem_bf$Soil_pH, richness_stat_nem_bf$Field.ID=="SHORELINE")
+data_shore_nem_bf<-data.frame(x2_nem_bf,y2_nem_bf)
+x3_nem_bf<-subset(richness_stat_nem_bf$Shannon, richness_stat_nem_bf$Field.ID=="SEDIMENT")
+y3_nem_bf<-subset(richness_stat_nem_bf$Soil_pH, richness_stat_nem_bf$Field.ID=="SEDIMENT")
+data_sediment_nem_bf<-data.frame(x3_nem_bf,y3_nem_bf)
+
+
+Nematode_BF_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_nem_bf, y = x1_nem_bf), data = data_prairie_nem_bf, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_nem_bf, y = x2_nem_bf), data = data_shore_nem_bf, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_nem_bf, y = x3_nem_bf), data = data_sediment_nem_bf, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Bacterial Feeders")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+
+
+nem_ff_GLM= glmmTMB(Shannon~Soil_pH*Field.ID+(1|Grower), data=richness_stat_nem_ff)
+Anova(nem_ff_GLM, ddf="Kenward-Roger")
+summary(nem_ff_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem_ff$Shannon
+Predicted = predict(nem_ff_GLM, type="response")
+Residuals = residuals(nem_ff_GLM)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+richness_nem_ff<- estimate_richness(nemotu_all_ff,measures=c("Observed","Shannon"))
+order_richness_nem_ff <- richness_nem_ff[order(rownames(richness_nem_ff)),]
+richness_stat_nem_ff<- cbind(order_richness_nem_ff,map)
+
+x1_nem_ff<-subset(richness_stat_nem_ff$Shannon, richness_stat_nem_ff$Field.ID=="PRAIRIE")
+y1_nem_ff<-subset(richness_stat_nem_ff$Soil_pH, richness_stat_nem_ff$Field.ID=="PRAIRIE")
+data_prairie_nem_ff=data.frame(x1_nem_ff,y1_nem_ff)
+x2_nem_ff<-subset(richness_stat_nem_ff$Shannon, richness_stat_nem_ff$Field.ID=="SHORELINE")
+y2_nem_ff<-subset(richness_stat_nem_ff$Soil_pH, richness_stat_nem_ff$Field.ID=="SHORELINE")
+data_shore_nem_ff<-data.frame(x2_nem_ff,y2_nem_ff)
+x3_nem_ff<-subset(richness_stat_nem_ff$Shannon, richness_stat_nem_ff$Field.ID=="SEDIMENT")
+y3_nem_ff<-subset(richness_stat_nem_ff$Soil_pH, richness_stat_nem_ff$Field.ID=="SEDIMENT")
+data_sediment_nem_ff<-data.frame(x3_nem_ff,y3_nem_ff)
+
+
+Nematode_ff_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_nem_ff, y = x1_nem_ff), data = data_prairie_nem_ff, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_nem_ff, y = x2_nem_ff), data = data_shore_nem_ff, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_nem_ff, y = x3_nem_ff), data = data_sediment_nem_ff, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Fungal Feeders")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+
+
+
+richness_nem_om<- estimate_richness(nemotu_all_om,measures=c("Observed","Shannon"))
+order_richness_nem_om <- richness_nem_om[order(rownames(richness_nem_om)),]
+richness_stat_nem_om<- cbind(order_richness_nem_om,map)
+
+
+nem_om_GLM= glmmTMB(Shannon~Soil_pH*Field.ID+(1|Grower), data=richness_stat_nem_om)
+Anova(nem_om_GLM, ddf="Kenward-Roger")
+summary(nem_om_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem_om$Shannon
+Predicted = predict(nem_om_GLM, type="response")
+Residuals = residuals(nem_om_GLM)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+x1_nem_om<-subset(richness_stat_nem_om$Shannon, richness_stat_nem_om$Field.ID=="PRAIRIE")
+y1_nem_om<-subset(richness_stat_nem_om$Soil_pH, richness_stat_nem_om$Field.ID=="PRAIRIE")
+data_prairie_nem_om=data.frame(x1_nem_om,y1_nem_om)
+x2_nem_om<-subset(richness_stat_nem_om$Shannon, richness_stat_nem_om$Field.ID=="SHORELINE")
+y2_nem_om<-subset(richness_stat_nem_om$Soil_pH, richness_stat_nem_om$Field.ID=="SHORELINE")
+data_shore_nem_om<-data.frame(x2_nem_om,y2_nem_om)
+x3_nem_om<-subset(richness_stat_nem_om$Shannon, richness_stat_nem_om$Field.ID=="SEDIMENT")
+y3_nem_om<-subset(richness_stat_nem_om$Soil_pH, richness_stat_nem_om$Field.ID=="SEDIMENT")
+data_sediment_nem_om<-data.frame(x3_nem_om,y3_nem_om)
+
+
+Nematode_om_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_nem_om, y = x1_nem_om), data = data_prairie_nem_om, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_nem_om, y = x2_nem_om), data = data_shore_nem_om, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_nem_om, y = x3_nem_om), data = data_sediment_nem_om, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Omnivores")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+
+
+richness_nem_pp<- estimate_richness(nemotu_all_pp,measures=c("Observed","Shannon"))
+order_richness_nem_pp <- richness_nem_pp[order(rownames(richness_nem_pp)),]
+richness_stat_nem_pp<- cbind(order_richness_nem_pp,map)
+
+nem_pp_GLM= glmmTMB(Shannon~Soil_pH*Field.ID+(1|Grower), data=richness_stat_nem_pp)
+Anova(nem_pp_GLM, ddf="Kenward-Roger")
+summary(nem_pp_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem_pp$Shannon
+Predicted = predict(nem_pp_GLM, type="response")
+Residuals = residuals(nem_pp_GLM)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+x1_nem_pp<-subset(richness_stat_nem_pp$Shannon, richness_stat_nem_pp$Field.ID=="PRAIRIE")
+y1_nem_pp<-subset(richness_stat_nem_pp$Soil_pH, richness_stat_nem_pp$Field.ID=="PRAIRIE")
+data_prairie_nem_pp=data.frame(x1_nem_pp,y1_nem_pp)
+x2_nem_pp<-subset(richness_stat_nem_pp$Shannon, richness_stat_nem_pp$Field.ID=="SHORELINE")
+y2_nem_pp<-subset(richness_stat_nem_pp$Soil_pH, richness_stat_nem_pp$Field.ID=="SHORELINE")
+data_shore_nem_pp<-data.frame(x2_nem_pp,y2_nem_pp)
+x3_nem_pp<-subset(richness_stat_nem_pp$Shannon, richness_stat_nem_pp$Field.ID=="SEDIMENT")
+y3_nem_pp<-subset(richness_stat_nem_pp$Soil_pH, richness_stat_nem_pp$Field.ID=="SEDIMENT")
+data_sediment_nem_pp<-data.frame(x3_nem_pp,y3_nem_pp)
+
+
+Nematode_pp_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_nem_pp, y = x1_nem_pp), data = data_prairie_nem_pp, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_nem_pp, y = x2_nem_pp), data = data_shore_nem_pp, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_nem_pp, y = x3_nem_pp), data = data_sediment_nem_pp, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Plant Parasites")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+ scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+
+
+richness_nem_pr<- estimate_richness(nemotu_all_pred,measures=c("Observed","Shannon"))
+order_richness_nem_pr <-richness_nem_pr[order(rownames(richness_nem_pr)),]
+richness_stat_nem_pr<- cbind(order_richness_nem_pr,map)
+
+nem_pr_GLM= glmmTMB(Shannon~Soil_pH*Field.ID+(1|Grower), data=richness_stat_nem_pr)
+Anova(nem_pr_GLM, ddf="Kenward-Roger")
+summary(nem_pr_GLM)
+### Efron r-squared 
+Actual    = richness_stat_nem_pr$Shannon
+Predicted = predict(nem_pr_GLM, type="response")
+Residuals = residuals(nem_pr_GLM)
+
+pseudo_r_squared = 1 - sum((Actual - Predicted)^2)/sum((Actual - mean(Actual))^2)
+pseudo_r_squared
+
+x1_nem_pr<-subset(richness_stat_nem_pr$Shannon, richness_stat_nem_pr$Field.ID=="PRAIRIE")
+y1_nem_pr<-subset(richness_stat_nem_pr$Soil_pH, richness_stat_nem_pr$Field.ID=="PRAIRIE")
+data_prairie_nem_pr=data.frame(x1_nem_pr,y1_nem_pr)
+x2_nem_pr<-subset(richness_stat_nem_pr$Shannon, richness_stat_nem_pr$Field.ID=="SHORELINE")
+y2_nem_pr<-subset(richness_stat_nem_pr$Soil_pH, richness_stat_nem_pr$Field.ID=="SHORELINE")
+data_shore_nem_pr<-data.frame(x2_nem_pr,y2_nem_pr)
+x3_nem_pr<-subset(richness_stat_nem_pr$Shannon, richness_stat_nem_pr$Field.ID=="SEDIMENT")
+y3_nem_pr<-subset(richness_stat_nem_pr$Soil_pH, richness_stat_nem_pr$Field.ID=="SEDIMENT")
+data_sediment_nem_pr<-data.frame(x3_nem_pr,y3_nem_pr)
+
+
+Nematode_pr_ggplot_shannon=ggplot() +
+  geom_smooth(aes(x = y1_nem_pr, y = x1_nem_pr), data = data_prairie_nem_pr, 
+              method = "glm", se = FALSE, color = "springgreen4") + 
+  geom_smooth(aes(x = y2_nem_pr, y = x2_nem_pr), data = data_shore_nem_pr, 
+              method = "glm", se = FALSE, color = "darkgoldenrod1") + 
+  geom_smooth(aes(x = y3_nem_pr, y = x3_nem_pr), data = data_sediment_nem_pr, 
+              method = "glm", se = FALSE, color = "deepskyblue") +
+  ggtitle("Predators")+xlab("Soil/Sediment pH") + ylab("Shannon Diversity")+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.1))+
+  theme_classic()
+ 
+library("ggpubr")
+
+##Add all plots together for figure:
+ggarrange(Bacteria_ggplot_shannon, Eukaryote_ggplot_shannon, Fungi_ggplot_shannon,Nematode_ggplot_shannon, Nematode_BF_ggplot_shannon, Nematode_om_ggplot_shannon,Nematode_pp_ggplot_shannon,Nematode_ff_ggplot_shannon, Nematode_pr_ggplot_shannon,
+          labels = c("A", "B", "C", "D", "E", "F", "G", "H", "I"),
+          ncol = 3, nrow = 3)
+          
+          
+
+###CorPlot####
+####Add diversity to map and then run this. 
+#Add diversity and Seperate habitat types
+
+map$Euk_Shannon <- (richness_stat_euk$Shannon)
+
+map$Bac_Shannon<- (richness_stat_bac$Shannon)
+
+map$Fung_Shannon <- (richness_stat_fun$Shannon)
+
+map$Nem_Shannon<- (richness_stat_nem$Shannon)
+dev.off(0)
+#change depending on habitat
+map_corplot<-subset(map, map$Field.ID == "PRAIRIE")
+
+Year =as.numeric(map_corplot$year)
+Potassium =as.numeric(map_corplot$Potassium_ppm)
+Calcium=as.numeric(map_corplot$Calcium_ppm)
+Sodium=as.numeric(map_corplot$Sodium_ppm)
+pH=as.numeric(map_corplot$Soil_pH)
+Chloride=as.numeric(map_corplot$Chloride_ppm)
+Iron=as.numeric(map_corplot$Iron_ppm)
+Organic_Matter = as.numeric(map_corplot$Organic.Matter.LOI..)
+Zinc = as.numeric(map_corplot$Zinc_ppm)
+Soil_Moisture= as.numeric(map_corplot$Soil_Moisture)
+Lake_Level= as.numeric(map_corplot$Lake_level)
+Precipitation= as.numeric(map_corplot$precip1year)
+NDVI=as.numeric(map_corplot$NDVI)
+
+
+# ensure matrices are 0-1 scaled
+scale01 <- function(x){x/max(x)}
+Eukaryotic_Diversity <- scale01(map_corplot$Euk_Shannon)
+#colnames(Euk_Shannon)[colnames(Euk_Shannon) == 'Shannon'] <- 'Euk_Shannon'
+
+Bacterial_Diversity <- scale01(map_corplot$Bac_Shannon)
+#colnames(Bac_Shannon)[colnames(Bac_Shannon) == 'Shannon'] <- 'Bac_Shannon'
+
+Fungal_Diversity <- scale01(map_corplot$Fung_Shannon)
+#colnames(Fung_Shannon)[colnames(Fung_Shannon) == 'Shannon'] <- 'Fung_Shannon'
+
+Nematode_Diversity <- scale01(map_corplot$Nem_Shannon)
+#colnames(Nem_Shannon)[colnames(Nem_Shannon) == 'Shannon'] <- 'Nem_Shannon'
+
+#Variables co-correlation plot
+nonzero.numericvars=cbind(Year,NDVI,Soil_Moisture,pH, Sodium, Potassium,Chloride, Calcium,Zinc, Iron, Organic_Matter, Eukaryotic_Diversity, Bacterial_Diversity,Fungal_Diversity,Nematode_Diversity)
+vars_cor<-cor(nonzero.numericvars[,1:15], method="pearson")
+testRes = cor.mtest(vars_cor, conf.level = 0.95)
+corrplot(vars_cor, type= "upper", diag  = F, tl.col = "black",p.mat = testRes$p,sig.level = 0.1)
+
+#Repeat for lake and shoreline, swap NDVI and soil moisture for lake level
+
+########Random forest
+
+# Data for randomForest analysis
+
+# select soil, climate and pland SR
+colnames(map)
+sub.fauna.dat <- map %>%
+  dplyr::select(Soil_Moisture, Grower, Field.ID, year, Soil_pH, Organic.Matter.LOI.., 
+         Potassium_ppm, Iron_ppm, Zinc_ppm, Sodium_ppm, Calcium_ppm, Chloride_ppm,precip1year,
+         Euk_Shannon, Bac_Shannon,  Fung_Shannon,Nem_Shannon,Longitude, Latitude,Lake_level,NDVI )
+names(sub.fauna.dat) <- c("Soil_Moisture", "Lake_Basin", "Habitat", "Year", "pH",
+                          "Organic_Matter", "Potassium", "Iron", 
+                          "Zinc", "Sodium", "Calcium", "Chloride", "Precipitation", 
+                          "Eukaryotic_Diversity", "Bacterial_Diversity",  "Fungal_Diversity", "Nematodes","Longitude", "Latitude", "Lake_level", "NDVI")
+sub.fauna.dat$Year=as.factor(sub.fauna.dat$Year)
+sub.fauna.dat$Lake_Basin=as.factor(sub.fauna.dat$Lake_Basin)
+sub.fauna.dat$Habitat=as.factor(sub.fauna.dat$Habitat)
+
+
+#############################
+# randomForest
+library(rfUtilities)
+library(rfPermute)
+library(caTools)
+library(caret)
+library(randomForest)
+library(ranger)
+library(vip)
+library(Metrics)
+
+###What are the main factors driving diversity across the whole region (i.e., all habitats)
+set.seed(123)
+whole_community_model= randomForest(
+  Nematodes~Habitat+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+    Bacterial_Diversity+Fungal_Diversity,
+  data=sub.fauna.dat, keep.forest = TRUE, mty= 4, importance = TRUE, ntree=1500
+)
+
+whole_community_model
+
+
+# Plot the error vs the number of trees graph
+plot(whole_community_model)
+
+# perform significance test for the random forest model
+set.seed(125)
+rf.perm1 <- rf.significance(whole_community_model, sub.fauna.dat[c("Habitat","Lake_Basin","Potassium","Sodium","Chloride","Calcium","Iron","Zinc", "Year","pH","Eukaryotic_Diversity",
+                                                    "Precipitation","Bacterial_Diversity","Fungal_Diversity")], 
+                            nperm = 9999, ntree = 1500)
+rf.perm1
+
+
+# estimate significance of importance metrics
+set.seed(127)
+fit1.rp <- rfPermute(Nematodes ~ Habitat+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+                       Bacterial_Diversity+Fungal_Diversity, 
+                     ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                     data = sub.fauna.dat)
+fit1.rp$pval
+
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp, scale = TRUE)
+
+
+##Because habitat is clearly driving diversity of the whole region, we want to see what specifically in each habitat is driving diversity.
+
+dev.off(2)
+
+
+
+######Sediment######
+sub.fauna.dat.sediment<-subset(sub.fauna.dat, sub.fauna.dat$Habitat=="SEDIMENT")
+colnames(sub.fauna.dat.sediment)
+# by nematodes
+set.seed(124)
+fit1.sed <- randomForest(Nematodes ~ Lake_level+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+                       Bacterial_Diversity+Fungal_Diversity, ntree = 1500, 
+                     keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.sediment)
+print(fit1.sed) # view results 
+plot(fit1.sed)
+
+#find number of trees that produce lowest test MSE
+which.min(fit1.sed$mse)
+
+#find RMSE of best model
+sqrt(fit1.sed$mse[which.min(fit1.sed$mse)]) 
+
+# Plot the error vs the number of trees graph
+plot(fit1.sed)
+
+#(out of bag error)
+oob=(fit1.sed$mse)
+1-mean(oob)
+
+# perform significance test for the random forest model
+set.seed(125)
+rf.perm1 <- rf.significance(fit1.sed, sub.fauna.dat.sediment[c("Lake_level","Lake_Basin","Potassium","Sodium","Chloride",
+                            "Calcium","Iron","Zinc", "Year","pH","Eukaryotic_Diversity",
+                            "Precipitation","Bacterial_Diversity","Fungal_Diversity")], 
+                            nperm = 9999, ntree = 1500, mty=4)
+rf.perm1
+
+# estimate significance of importance metrics
+set.seed(127)
+fit1.rp.sed <- rfPermute(Nematodes ~ Lake_level+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+                       Bacterial_Diversity+Fungal_Diversity, 
+                     ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                     data = sub.fauna.dat.sediment)
+fit1.rp.sed$pval
+
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.sed, scale = TRUE)
+#Fungal diversity is mst important. This is odd, while year is unimportant, knowing the sampling scheme I am concerned 2019 (wading not kayak) is throwing this value off
+#repeat without 2019:
+
+sub.fauna.dat.sediment.no.19<-subset(sub.fauna.dat, sub.fauna.dat$Habitat=="SEDIMENT"&sub.fauna.dat$Year!="2019" )
+colnames(sub.fauna.dat.sediment.no.19)
+# by nematodes
+set.seed(124)
+fit1.sed.no.19 <- randomForest(Nematodes ~ Lake_level+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+                           Bacterial_Diversity+Fungal_Diversity, ntree = 1500, 
+                         keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.sediment.no.19)
+print(fit1.sed.no.19) # view results 
+plot(fit1.sed.no.19)
+
+#find number of trees that produce lowest test MSE
+which.min(fit1.sed.no.19$mse)
+
+#find RMSE of best model
+sqrt(fit1.sed.no.19$mse[which.min(fit1.sed.no.19$mse)]) 
+
+# Plot the error vs the number of trees graph
+plot(fit1.sed.no.19)
+
+#(out of bag error)
+oob=(fit1.sed.no.19$mse)
+1-mean(oob)
+
+# perform significance test for the random forest model
+set.seed(125)
+rf.perm1 <- rf.significance(fit1.sed.no.19, sub.fauna.dat.sediment.no.19[c("Lake_level","Lake_Basin","Potassium","Sodium","Chloride",
+                                                               "Calcium","Iron","Zinc", "Year","pH","Eukaryotic_Diversity",
+                                                               "Precipitation","Bacterial_Diversity","Fungal_Diversity")], 
+                            nperm = 9999, ntree = 1500, mty=4)
+rf.perm1
+
+# estimate significance of importance metrics
+set.seed(127)
+fit1.rp.sed <- rfPermute(Nematodes ~ Lake_level+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+                           Bacterial_Diversity+Fungal_Diversity, 
+                         ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                         data = sub.fauna.dat.sediment.no.19)
+fit1.rp.sed$pval
+
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.sed, scale = TRUE)
+##Eukaryotic diversity is now the most important, fungal is still important thought
+
+
+
+
+######Shoreline######
+sub.fauna.dat.shore<-subset(sub.fauna.dat, sub.fauna.dat$Habitat=="SHORELINE")
+colnames(sub.fauna.dat.shore)
+# by nematodes
+set.seed(124)
+fit1.shore <- randomForest(Nematodes ~ Lake_level+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+
+                           Bacterial_Diversity, ntree = 1500, 
+                         keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.shore)
+print(fit1.shore) # view results 
+plot(fit1.shore)
+
+#find number of trees that produce lowest test MSE
+which.min(fit1.shore$mse)
+
+#find RMSE of best model
+sqrt(fit1.shore$mse[which.min(fit1.shore$mse)]) 
+
+# Plot the error vs the number of trees graph
+plot(fit1.shore)
+
+#(out of bag error)
+oob=(fit1.shore$mse)
+1-mean(oob)
+
+# perform significance test for the random forest model
+set.seed(125)
+rf.perm1 <- rf.significance(fit1.shore, sub.fauna.dat.sediment[c("Lake_level","Lake_Basin","Potassium","Sodium","Chloride","Calcium","Iron","Zinc", "Year","pH","Eukaryotic_Diversity",
+                                                               "Precipitation","Bacterial_Diversity","Fungal_Diversity")], 
+                            nperm = 9999, ntree = 1500, mty=4)
+rf.perm1
+
+
+# estimate significance of importance metrics
+set.seed(127)
+fit1.rp.shore <- rfPermute(Nematodes ~ Lake_level+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+                           Bacterial_Diversity+Fungal_Diversity, 
+                         ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                         data = sub.fauna.dat.shore)
+fit1.rp.shore$pval
+
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.shore, scale = TRUE)
+
+
+
+######Prairie######
+sub.fauna.dat.prairie<-subset(sub.fauna.dat, sub.fauna.dat$Habitat=="PRAIRIE")
+colnames(sub.fauna.dat.prairie)
+# by nematodes
+set.seed(124)
+fit1.prairie <- randomForest(Nematodes ~ Soil_Moisture+Lake_level+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+                             Bacterial_Diversity+Fungal_Diversity, ntree = 1500, 
+                           keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.prairie)
+print(fit1.prairie) # view results 
+
+plot(fit1.prairie)
+
+#find number of trees that produce lowest test MSE
+which.min(fit1.prairie$mse)
+
+#find RMSE of best model
+sqrt(fit1.prairie$mse[which.min(fit1.prairie$mse)]) 
+
+# Plot the error vs the number of trees graph
+plot(fit1.prairie)
+
+#(out of bag error)
+oob=(fit1.prairie$mse)
+1-mean(oob)
+
+# perform significance test for the random forest model
+set.seed(125)
+rf.perm1 <- rf.significance(fit1.shore, sub.fauna.dat.sediment[c("Lake_level","Lake_Basin","Potassium","Sodium","Chloride","Calcium","Iron","Zinc", "Year","pH","Eukaryotic_Diversity",
+                                                                 "Precipitation","Bacterial_Diversity","Fungal_Diversity")], 
+                            nperm = 9999, ntree = 1500, mty=4)
+rf.perm1
+
+
+# estimate significance of importance metrics
+set.seed(127)
+fit1.rp.shore <- rfPermute(Nematodes ~ Lake_level+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+NDVI
+                             Bacterial_Diversity+Fungal_Diversity, 
+                           ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                           data = sub.fauna.dat.shore)
+fit1.rp.shore$pval
+
+
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.shore, scale = TRUE)
+
+
+#####Model fit for nemtodes was terrible!! 
+#Try splitting for trophic groups to see if results are confounded by nematode community complexity:
+
+#Add diversity and Seperate habitat types
+
+sub.fauna.dat$BF <- (richness_stat_nem_bf$Shannon)
+sub.fauna.dat$FF <- (richness_stat_nem_ff$Shannon)
+sub.fauna.dat$OM <- (richness_stat_nem_om$Shannon)
+sub.fauna.dat$PP <- (richness_stat_nem_pp$Shannon)
+sub.fauna.dat$PR <- (richness_stat_nem_pr$Shannon)
+
+#Bacterial Feeder:
+set.seed(122)
+fit1.prairie.bf <- randomForest(BF ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+NDVI+Eukaryotic_Diversity+
+                                  Bacterial_Diversity+Fungal_Diversity+OM+PP+PR+FF, ntree = 1500, 
+                                keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.prairie)
+print(fit1.prairie.bf) # view results 
+plot(fit1.prairie.bf)
+
+
+set.seed(125)
+rf.perm1.BF <- rf.significance(fit1.prairie.bf, sub.fauna.dat.prairie[c("Soil_Moisture","Lake_Basin","Year","Potassium","Sodium","Chloride","Calcium","Iron","Zinc","pH","NDVI","Eukaryotic_Diversity",
+                                                                 "Bacterial_Diversity","Fungal_Diversity","OM","PP","PR","FF")], 
+                            nperm = 9999, ntree = 1500)
+rf.perm1.BF
+
+
+# estimate significance of importance metrics
+set.seed(127)
+fit1.rp.BF <- rfPermute(BF ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+NDVI+Eukaryotic_Diversity+
+                             Bacterial_Diversity+Fungal_Diversity+OM+PP+PR+FF, 
+                           ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                           data = sub.fauna.dat.prairie)
+fit1.rp.BF$pval
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.BF, scale = TRUE)
+
+
+##Fungal Feeders:
+set.seed(126)
+fit1.prairie.FF <- randomForest(FF ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+Eukaryotic_Diversity+
+                               Bacterial_Diversity+Fungal_Diversity+OM+PP+PR+BF, ntree = 1500, 
+                             keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.prairie)
+print(fit1.prairie.FF) # view results 
+plot(fit1.prairie.FF)
+
+set.seed(12)
+rf.perm1.FF <- rf.significance(fit1.prairie.FF, sub.fauna.dat.prairie[c("Soil_Moisture","Lake_Basin","Year","Potassium","Sodium","Chloride","Calcium","Iron","Zinc","pH","NDVI","Eukaryotic_Diversity",
+                                                                        "Bacterial_Diversity","Fungal_Diversity","OM","PP","PR","BF")], 
+                               nperm = 9999, ntree = 1500)
+rf.perm1.FF
+
+
+# estimate significance of importance metrics
+set.seed(120)
+fit1.rp.FF <- rfPermute(FF ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+NDVI+Eukaryotic_Diversity+
+                          Bacterial_Diversity+Fungal_Diversity+OM+PP+PR+BF, 
+                        ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                        data = sub.fauna.dat.prairie)
+fit1.rp.FF$pval
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.FF, scale = TRUE)
+
+
+
+##Predators:
+
+set.seed(127)
+fit1.prairie.PR <- randomForest(PR ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+NDVI+pH+Eukaryotic_Diversity+
+                               Bacterial_Diversity+Fungal_Diversity+OM+PP+BF+FF, ntree = 1500, 
+                             keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.prairie)
+print(fit1.prairie.PR) # view results 
+plot(fit1.prairie.PR)
+
+set.seed(11)
+rf.perm1.PR <- rf.significance(fit1.prairie.PR, sub.fauna.dat.prairie[c("Soil_Moisture","Lake_Basin","Year","Potassium","Sodium","Chloride","Calcium","Iron","Zinc","pH","NDVI","Eukaryotic_Diversity",
+                                                                        "Bacterial_Diversity","Fungal_Diversity","OM","PP","FF","BF")], 
+                               nperm = 9999, ntree = 1500)
+rf.perm1.PR
+
+
+# estimate significance of importance metrics
+set.seed(1130)
+fit1.rp.PR <- rfPermute(PR ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+pH+NDVI+Eukaryotic_Diversity+
+                          Bacterial_Diversity+Fungal_Diversity+OM+PP+BF+FF, 
+                        ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                        data = sub.fauna.dat.prairie)
+fit1.rp.PR$pval
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.PR, scale = TRUE)
+
+
+#Plant Parasites:
+
+set.seed(128)
+fit1.prairie.PP <- randomForest(PP ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+NDVI+pH+Eukaryotic_Diversity+
+                                  Bacterial_Diversity+Fungal_Diversity+OM+PR+BF+FF, ntree = 1500, 
+                                keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.prairie)
+print(fit1.prairie.PP) # view results 
+plot(fit1.prairie.PP)
+
+set.seed(112)
+rf.perm1.PP <- rf.significance(fit1.prairie.PP, sub.fauna.dat.prairie[c("Soil_Moisture","Lake_Basin","Year","Potassium","Sodium","Chloride","Calcium","Iron","Zinc","pH","NDVI","Eukaryotic_Diversity",
+                                                                        "Bacterial_Diversity","Fungal_Diversity","OM","PR","FF","BF")], 
+                               nperm = 9999, ntree = 1500)
+rf.perm1.PP
+
+
+# estimate significance of importance metrics
+set.seed(110)
+fit1.rp.PP <- rfPermute(PP ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+NDVI+pH+Eukaryotic_Diversity+
+                          Bacterial_Diversity+Fungal_Diversity+OM+PR+BF+FF, 
+                        ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                        data = sub.fauna.dat.prairie)
+fit1.rp.PP$pval
+
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.PP, scale = TRUE)
+
+
+
+##Omnivores
+set.seed(129)
+fit1.prairie.OM <- randomForest(OM ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+Zinc+NDVI+pH+Eukaryotic_Diversity+
+                                  Bacterial_Diversity+Fungal_Diversity+PR+PP+BF+FF, ntree = 1500, 
+                                keep.forest = TRUE, mty= 4, importance = TRUE, data = sub.fauna.dat.prairie)
+print(fit1.prairie.OM) # view results 
+plot(fit1.prairie.OM)
+
+set.seed(1111)
+rf.perm1.OM <- rf.significance(fit1.prairie.OM, sub.fauna.dat.prairie[c("Soil_Moisture","Lake_Basin","Year","Potassium","Sodium","Chloride","Calcium","Iron","Zinc","pH","NDVI","Eukaryotic_Diversity",
+                                                                        "Bacterial_Diversity","Fungal_Diversity","PP","PR","FF","BF")], 
+                               nperm = 9999, ntree = 1500)
+rf.perm1.OM
+
+
+# estimate significance of importance metrics
+set.seed(1130)
+fit1.rp.OM <- rfPermute(OM ~ Soil_Moisture+Lake_Basin+Year+Potassium+Sodium+Chloride+Calcium+Iron+NDVI+Zinc+pH+Eukaryotic_Diversity+
+                          Bacterial_Diversity+Fungal_Diversity+PR+PP+BF+FF, 
+                        ntree = 1500, mty= 4,nrep = 9999, # num.cores = 3,
+                        data = sub.fauna.dat.prairie)
+fit1.rp.OM$pval
+# plot the scaled importance distributions and highlight significant predictors
+plotImportance(fit1.rp.OM, scale = TRUE)
+
+
